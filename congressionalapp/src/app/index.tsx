@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/refs */
 import React, { useEffect, useRef, useState } from "react";
 import {
   View,
@@ -59,22 +60,147 @@ function distanceToStrokes(px: number, py: number, strokes: Point[][]) {
 // TRIANGLE (SHAPE) MODE
 // ------------------------------------------------------------------
 
-const TRIANGLE = [
+const TRIANGLE: Point[] = [
   { x: 100, y: 150 }, // top
   { x: 250, y: 500 }, // bottom left
   { x: 50, y: 500 }, // bottom right
 ];
 
-function distanceToTriangle(px: number, py: number) {
-  const edges = [
-    [TRIANGLE[0], TRIANGLE[1]],
-    [TRIANGLE[1], TRIANGLE[2]],
-    [TRIANGLE[2], TRIANGLE[0]],
-  ];
-
+function distanceToShape(px: number, py: number, shape: Point[]) {
   return Math.min(
-    ...edges.map(([a, b]) => distToSegment(px, py, a.x, a.y, b.x, b.y))
+    ...shape.map((point, index) => {
+      const next = shape[(index + 1) % shape.length];
+      return distToSegment(px, py, point.x, point.y, next.x, next.y);
+    })
   );
+}
+
+function regularPolygon(sides: number): Point[] {
+  const centerX = 150;
+  const centerY = 325;
+  const radius = 175;
+  const startAngle = -Math.PI / 2;
+
+  return Array.from({ length: sides }, (_, index) => {
+    const angle = startAngle + (index * Math.PI * 2) / sides;
+    return {
+      x: centerX + Math.cos(angle) * radius,
+      y: centerY + Math.sin(angle) * radius,
+    };
+  });
+}
+
+function ellipsePoints(radiusX: number, radiusY: number, count = 40, start = 0, end = Math.PI * 2) {
+  return Array.from({ length: count }, (_, index) => {
+    const angle = start + ((end - start) * index) / (count - 1);
+    return { x: 150 + Math.cos(angle) * radiusX, y: 325 + Math.sin(angle) * radiusY };
+  });
+}
+
+function randomQuadrilateral(): Point[] {
+  const minDistance = 90;
+  const points: Point[] = [];
+  let attempts = 0;
+
+  while (points.length < 4 && attempts < 500) {
+    attempts += 1;
+    const candidate = {
+      x: 55 + Math.random() * 190,
+      y: 80 + Math.random() * 390,
+    };
+    if (points.every((point) => Math.hypot(point.x - candidate.x, point.y - candidate.y) >= minDistance)) {
+      points.push(candidate);
+    }
+  }
+
+  if (points.length < 4) return regularPolygon(4);
+  const center = points.reduce((sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }), { x: 0, y: 0 });
+  return points.sort(
+    (a, b) => Math.atan2(a.y - center.y, a.x - center.x) - Math.atan2(b.y - center.y, b.x - center.x)
+  );
+}
+
+function starPoints(points = 5): Point[] {
+  return Array.from({ length: points * 2 }, (_, index) => {
+    const angle = -Math.PI / 2 + (index * Math.PI) / points;
+    const radius = index % 2 === 0 ? 175 : 78;
+    return { x: 150 + Math.cos(angle) * radius, y: 325 + Math.sin(angle) * radius };
+  });
+}
+
+function triangleVariant(type: string): Point[] {
+  if (type === "right") return [{ x: 65, y: 470 }, { x: 65, y: 100 }, { x: 245, y: 470 }];
+  if (type === "isosceles" || type === "equilateral") return regularPolygon(3);
+  if (type === "obtuse") return [{ x: 35, y: 450 }, { x: 270, y: 410 }, { x: 155, y: 100 }];
+  if (type === "acute") return [{ x: 55, y: 450 }, { x: 245, y: 450 }, { x: 150, y: 135 }];
+  return [{ x: 45, y: 450 }, { x: 250, y: 425 }, { x: 125, y: 100 }];
+}
+
+function namedShape(normalized: string): Point[] | null {
+  if (normalized.includes("semicircle")) return ellipsePoints(145, 145, 24, Math.PI, Math.PI * 2).concat([{ x: 5, y: 325 }]);
+  if (normalized.includes("quarter circle")) return ellipsePoints(145, 145, 24, Math.PI * 1.5, Math.PI * 2).concat([{ x: 150, y: 325 }, { x: 150, y: 180 }]);
+  if (normalized.includes("circle")) return ellipsePoints(145, 145);
+  if (normalized.includes("oval")) return ellipsePoints(145, 95);
+  if (normalized.includes("heart")) return [{ x: 150, y: 480 }, { x: 35, y: 270 }, { x: 45, y: 170 }, { x: 105, y: 135 }, { x: 150, y: 185 }, { x: 195, y: 135 }, { x: 255, y: 170 }, { x: 265, y: 270 }];
+  if (normalized.includes("crescent")) return [{ x: 235, y: 90 }, { x: 125, y: 120 }, { x: 80, y: 230 }, { x: 105, y: 365 }, { x: 210, y: 465 }, { x: 155, y: 350 }, { x: 135, y: 250 }, { x: 155, y: 155 }];
+  if (normalized.includes("cross")) return [{ x: 110, y: 70 }, { x: 190, y: 70 }, { x: 190, y: 230 }, { x: 270, y: 230 }, { x: 270, y: 310 }, { x: 190, y: 310 }, { x: 190, y: 480 }, { x: 110, y: 480 }, { x: 110, y: 310 }, { x: 30, y: 310 }, { x: 30, y: 230 }, { x: 110, y: 230 }];
+  if (normalized.includes("arrow")) return [{ x: 30, y: 280 }, { x: 180, y: 280 }, { x: 180, y: 205 }, { x: 270, y: 325 }, { x: 180, y: 445 }, { x: 180, y: 370 }, { x: 30, y: 370 }];
+  if (normalized.includes("star")) return starPoints();
+  if (normalized.includes("kite")) return [{ x: 150, y: 70 }, { x: 245, y: 270 }, { x: 150, y: 480 }, { x: 55, y: 270 }];
+  if (normalized.includes("rhombus")) return [{ x: 150, y: 70 }, { x: 260, y: 325 }, { x: 150, y: 480 }, { x: 40, y: 325 }];
+  if (normalized.includes("trapezoid")) return [{ x: 90, y: 90 }, { x: 210, y: 90 }, { x: 265, y: 470 }, { x: 35, y: 470 }];
+  if (normalized.includes("parallelogram")) return [{ x: 85, y: 90 }, { x: 265, y: 90 }, { x: 215, y: 470 }, { x: 35, y: 470 }];
+  if (normalized.includes("rectangle")) return [{ x: 45, y: 110 }, { x: 255, y: 110 }, { x: 255, y: 450 }, { x: 45, y: 450 }];
+  if (normalized.includes("square")) return regularPolygon(4);
+  return null;
+}
+
+function shapeFromPrompt(prompt: string): Point[] | null {
+  const normalized = prompt.trim().toLowerCase();
+  const numberMatch = normalized.match(/\b(\d+)\s*(?:[- ]?sided|[- ]?gon)\b/);
+  const namedSides: Record<string, number> = {
+    triangle: 3,
+    quadrilateral: 4,
+    pentagon: 5,
+    hexagon: 6,
+    heptagon: 7,
+    octagon: 8,
+    nonagon: 9,
+    decagon: 10,
+    dodecagon: 12,
+  };
+
+  if (normalized.includes("quadrilateral") || (normalized.includes("random") && normalized.includes("4"))) {
+    return randomQuadrilateral();
+  }
+
+  const commonShape = namedShape(normalized);
+  if (commonShape) return commonShape;
+
+  if (normalized.includes("equilateral") || normalized.includes("isosceles") || normalized.includes("scalene") || normalized.includes("right triangle") || normalized.includes("acute triangle") || normalized.includes("obtuse triangle")) {
+    const type = normalized.match(/equilateral|isosceles|scalene|right|acute|obtuse/)?.[0] ?? "scalene";
+    return triangleVariant(type);
+  }
+
+  const sides = numberMatch
+    ? Number(numberMatch[1])
+    : Object.entries(namedSides).find(([name]) => normalized.includes(name))?.[1];
+  return sides && sides >= 3 && sides <= 12 ? regularPolygon(sides) : null;
+}
+
+function fitShapeToCanvas(shape: Point[], width: number, height: number): Point[] {
+  if (width <= 0 || height <= 0) return shape;
+  const margin = 28;
+  const minX = Math.min(...shape.map((point) => point.x));
+  const maxX = Math.max(...shape.map((point) => point.x));
+  const minY = Math.min(...shape.map((point) => point.y));
+  const maxY = Math.max(...shape.map((point) => point.y));
+  const scale = Math.min((width - margin * 2) / Math.max(maxX - minX, 1), (height - margin * 2) / Math.max(maxY - minY, 1));
+  const shapeWidth = (maxX - minX) * scale;
+  const shapeHeight = (maxY - minY) * scale;
+  const offsetX = (width - shapeWidth) / 2 - minX * scale;
+  const offsetY = (height - shapeHeight) / 2 - minY * scale;
+  return shape.map((point) => ({ x: point.x * scale + offsetX, y: point.y * scale + offsetY }));
 }
 
 function TriangleEdge({ a, b }: { a: Point; b: Point }) {
@@ -98,6 +224,25 @@ function TriangleEdge({ a, b }: { a: Point; b: Point }) {
         height: 4,
         backgroundColor: "white",
         transform: [{ rotate: `${angle}deg` }],
+      }}
+    />
+  );
+}
+
+function ShapeVertex({ point }: { point: Point }) {
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        left: point.x - 5,
+        top: point.y - 5,
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: "#62a8ff",
+        borderWidth: 2,
+        borderColor: "white",
       }}
     />
   );
@@ -151,6 +296,9 @@ function functionNameAtEnd(text: string) {
 
 export default function Index() {
   const [mode, setMode] = useState<"shape" | "graph">("shape");
+  const [shapeInput, setShapeInput] = useState("triangle");
+  const [shape, setShape] = useState<Point[]>(TRIANGLE);
+  const [shapeError, setShapeError] = useState<string | null>(null);
 
   const [debugDist, setDebugDist] = useState<number | null>(null);
 
@@ -182,6 +330,22 @@ export default function Index() {
   // separate strokes wherever the function has a gap or a big jump
   // (e.g. an asymptote).
   const [strokes, setStrokes] = useState<Point[][]>([]);
+
+  const displayedShape = fitShapeToCanvas(
+    shape,
+    graphLayout.width,
+    graphLayout.height
+  );
+
+  function applyShapePrompt(prompt: string) {
+    const nextShape = shapeFromPrompt(prompt);
+    if (!nextShape) {
+      setShapeError("Try a named shape, regular polygon with sides, or 5-gon.");
+      return;
+    }
+    setShape(nextShape);
+    setShapeError(null);
+  }
 
   const xPixelsPerUnit =
     graphLayout.width > 0 ? graphLayout.width / (xMax - xMin) : 0;
@@ -316,7 +480,7 @@ export default function Index() {
       compiledRef.current = node.compile();
       setEquationError(null);
       setEquationVersion((v) => v + 1); // triggers resample below
-    } catch (e) {
+    } catch {
       compiledRef.current = null;
       setEquationError("Couldn't understand that equation.");
       setStrokes([]);
@@ -379,9 +543,16 @@ export default function Index() {
 
   const lastPulseTime = useRef(0);
   const nextPulseDelay = useRef(9999);
+  const currentDistanceRef = useRef(Infinity);
+  const hapticIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const currentTimeRef = useRef(0);
+  const shapeRef = useRef(shape);
+  const activeVertexHitsRef = useRef<boolean[]>([]);
+  useEffect(() => {
+    shapeRef.current = displayedShape;
+  }, [displayedShape]);
 
-  const triggerHapticIfDue = (distance: number) => {
-    const now = Date.now();
+  const triggerHapticIfDue = (distance: number, now: number) => {
     const MAX_DIST = 60;
 
     if (distance > MAX_DIST) {
@@ -398,14 +569,47 @@ export default function Index() {
       lastPulseTime.current = now;
 
       if (distance < 8) {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       } else if (distance < 25) {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       } else {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
     }
   };
+
+  const triggerVertexHapticOnEntry = (x: number, y: number) => {
+    const HITBOX_RADIUS = 24;
+    const previousHits = activeVertexHitsRef.current;
+    const currentHits = shapeRef.current.map(
+      (point) => Math.hypot(point.x - x, point.y - y) <= HITBOX_RADIUS
+    );
+
+    currentHits.forEach((inside, index) => {
+      if (inside && !previousHits[index]) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      }
+    });
+    activeVertexHitsRef.current = currentHits;
+  };
+
+  const stopHapticPolling = () => {
+    if (hapticIntervalRef.current !== null) {
+      clearInterval(hapticIntervalRef.current);
+      hapticIntervalRef.current = null;
+    }
+    currentDistanceRef.current = Infinity;
+  };
+
+  const startHapticPolling = () => {
+    stopHapticPolling();
+    hapticIntervalRef.current = setInterval(() => {
+      currentTimeRef.current = Date.now();
+      triggerHapticIfDue(currentDistanceRef.current, currentTimeRef.current);
+    }, 40);
+  };
+
+  useEffect(() => stopHapticPolling, []);
 
   // PanResponder is created exactly once (see below), so its handler
   // closures would otherwise freeze on the "mode" and "strokes" values
@@ -443,10 +647,22 @@ export default function Index() {
     return Math.hypot(a.pageX - b.pageX, a.pageY - b.pageY);
   };
 
+  // PanResponder is intentionally created once so it keeps one responder identity.
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
+
+      onPanResponderGrant: (evt) => {
+            const { locationX, locationY } = evt.nativeEvent;
+        activeVertexHitsRef.current = [];
+        triggerVertexHapticOnEntry(locationX, locationY);
+        currentDistanceRef.current =
+          modeRef.current === "shape"
+                ? distanceToShape(locationX, locationY, shapeRef.current)
+            : distanceToStrokes(locationX, locationY, strokesRef.current);
+        startHapticPolling();
+      },
 
       onPanResponderMove: (evt) => {
         const { locationX, locationY, touches } = evt.nativeEvent;
@@ -488,14 +704,18 @@ export default function Index() {
         // One finger keeps the original haptic graph/triangle interaction.
         const distance =
           modeRef.current === "shape"
-            ? distanceToTriangle(locationX, locationY)
+            ? distanceToShape(locationX, locationY, shapeRef.current)
             : distanceToStrokes(locationX, locationY, strokesRef.current);
 
+        currentDistanceRef.current = distance;
+        triggerVertexHapticOnEntry(locationX, locationY);
         setDebugDist(Number.isFinite(distance) ? Math.round(distance) : null);
-        triggerHapticIfDue(distance);
+        triggerHapticIfDue(distance, currentTimeRef.current);
       },
 
       onPanResponderRelease: () => {
+        stopHapticPolling();
+        activeVertexHitsRef.current = [];
         pinchStartDistanceRef.current = null;
         pinchStartXRangeRef.current = null;
         pinchStartYRangeRef.current = null;
@@ -503,6 +723,8 @@ export default function Index() {
       },
 
       onPanResponderTerminate: () => {
+        stopHapticPolling();
+        activeVertexHitsRef.current = [];
         pinchStartDistanceRef.current = null;
         pinchStartXRangeRef.current = null;
         pinchStartYRangeRef.current = null;
@@ -582,6 +804,30 @@ export default function Index() {
         )}
 
         {equationError && <Text style={styles.errorText}>{equationError}</Text>}
+
+        {mode === "shape" && (
+          <>
+            <View style={styles.shapeInputRow}>
+              <TextInput
+                style={styles.shapeInput}
+                value={shapeInput}
+                onChangeText={setShapeInput}
+                onSubmitEditing={() => applyShapePrompt(shapeInput)}
+                placeholder="e.g. pentagon or random quadrilateral"
+                placeholderTextColor="#888"
+                autoCapitalize="none"
+                returnKeyType="done"
+              />
+              <Pressable
+                style={styles.shapeActionButton}
+                onPress={() => applyShapePrompt(shapeInput)}
+              >
+                <Text style={styles.shapeActionText}>Draw</Text>
+              </Pressable>
+            </View>
+            {shapeError && <Text style={styles.errorText}>{shapeError}</Text>}
+          </>
+        )}
       </View>
 
       {/* ---------------- Drawing / touch area ---------------- */}
@@ -595,9 +841,16 @@ export default function Index() {
       >
         {mode === "shape" && (
           <>
-            <TriangleEdge a={TRIANGLE[0]} b={TRIANGLE[1]} />
-            <TriangleEdge a={TRIANGLE[1]} b={TRIANGLE[2]} />
-            <TriangleEdge a={TRIANGLE[2]} b={TRIANGLE[0]} />
+            {displayedShape.map((point, index) => (
+              <TriangleEdge
+                key={`${point.x}-${point.y}`}
+                a={point}
+                b={displayedShape[(index + 1) % displayedShape.length]}
+              />
+            ))}
+            {displayedShape.map((point) => (
+              <ShapeVertex key={`vertex-${point.x}-${point.y}`} point={point} />
+            ))}
           </>
         )}
 
@@ -801,7 +1054,7 @@ export default function Index() {
           {debugDist !== null
             ? `Distance: ${debugDist}px`
             : mode === "shape"
-              ? "Touch and drag to feel the triangle"
+              ? "Touch and drag to feel the shape"
               : "Touch and drag to feel the curve"}
         </Text>
       </View>
@@ -849,6 +1102,37 @@ const styles = StyleSheet.create({
   equationRow: {
     flexDirection: "row",
     gap: 10,
+  },
+
+  shapeInputRow: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+  },
+
+  shapeInput: {
+    flex: 1,
+    color: "white",
+    borderWidth: 1,
+    borderColor: "#555",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 16,
+  },
+
+  shapeActionButton: {
+    height: 40,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    justifyContent: "center",
+    backgroundColor: "#3366cc",
+  },
+
+  shapeActionText: {
+    color: "white",
+    fontSize: 14,
+    fontWeight: "600",
   },
 
   equationInput: {
