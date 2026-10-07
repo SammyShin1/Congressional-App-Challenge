@@ -40,6 +40,39 @@ function distToSegment(
 
 type Point = { x: number; y: number };
 
+const MAX_HAPTIC_DISTANCE = 35;
+
+function crossProduct(a: Point, b: Point, c: Point) {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+function segmentsIntersect(a: Point, b: Point, c: Point, d: Point) {
+  const abc = crossProduct(a, b, c);
+  const abd = crossProduct(a, b, d);
+  const cda = crossProduct(c, d, a);
+  const cdb = crossProduct(c, d, b);
+  return abc * abd < 0 && cda * cdb < 0;
+}
+
+function isValidQuadrilateral(points: Point[]) {
+  if (points.length !== 4) return false;
+
+  for (let first = 0; first < points.length; first++) {
+    for (let second = first + 1; second < points.length; second++) {
+      for (let third = second + 1; third < points.length; third++) {
+        if (Math.abs(crossProduct(points[first], points[second], points[third])) < 1e-6) {
+          return false;
+        }
+      }
+    }
+  }
+
+  return (
+    !segmentsIntersect(points[0], points[1], points[2], points[3]) &&
+    !segmentsIntersect(points[1], points[2], points[3], points[0])
+  );
+}
+
 // Distance from a point to the nearest segment across a set of polylines
 // (each "stroke" is one continuous piece of curve; graphs can have several,
 // e.g. either side of an asymptote like 1/x)
@@ -99,25 +132,31 @@ function ellipsePoints(radiusX: number, radiusY: number, count = 40, start = 0, 
 
 function randomQuadrilateral(): Point[] {
   const minDistance = 90;
-  const points: Point[] = [];
-  let attempts = 0;
-
-  while (points.length < 4 && attempts < 500) {
-    attempts += 1;
-    const candidate = {
+  for (let attempt = 0; attempt < 500; attempt++) {
+    const points = Array.from({ length: 4 }, () => ({
       x: 55 + Math.random() * 190,
       y: 80 + Math.random() * 390,
-    };
-    if (points.every((point) => Math.hypot(point.x - candidate.x, point.y - candidate.y) >= minDistance)) {
-      points.push(candidate);
-    }
+    }));
+    const pointsAreSeparated = points.every((point, index) =>
+      points.slice(index + 1).every(
+        (other) => Math.hypot(point.x - other.x, point.y - other.y) >= minDistance
+      )
+    );
+    if (!pointsAreSeparated) continue;
+
+    const center = points.reduce(
+      (sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }),
+      { x: 0, y: 0 }
+    );
+    const sortedPoints = points.sort(
+      (a, b) =>
+        Math.atan2(a.y - center.y, a.x - center.x) -
+        Math.atan2(b.y - center.y, b.x - center.x)
+    );
+    if (isValidQuadrilateral(sortedPoints)) return sortedPoints;
   }
 
-  if (points.length < 4) return regularPolygon(4);
-  const center = points.reduce((sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }), { x: 0, y: 0 });
-  return points.sort(
-    (a, b) => Math.atan2(a.y - center.y, a.x - center.x) - Math.atan2(b.y - center.y, b.x - center.x)
-  );
+  return regularPolygon(4);
 }
 
 function starPoints(points = 5): Point[] {
@@ -195,7 +234,11 @@ function fitShapeToCanvas(shape: Point[], width: number, height: number): Point[
   const maxX = Math.max(...shape.map((point) => point.x));
   const minY = Math.min(...shape.map((point) => point.y));
   const maxY = Math.max(...shape.map((point) => point.y));
-  const scale = Math.min((width - margin * 2) / Math.max(maxX - minX, 1), (height - margin * 2) / Math.max(maxY - minY, 1));
+  const scale =
+    Math.min(
+      (width - margin * 2) / Math.max(maxX - minX, 1),
+      (height - margin * 2) / Math.max(maxY - minY, 1)
+    ) * 0.82;
   const shapeWidth = (maxX - minX) * scale;
   const shapeHeight = (maxY - minY) * scale;
   const offsetX = (width - shapeWidth) / 2 - minX * scale;
@@ -553,9 +596,9 @@ export default function Index() {
   }, [displayedShape]);
 
   const triggerHapticIfDue = (distance: number, now: number) => {
-    const MAX_DIST = 60;
+    const MAX_DIST = MAX_HAPTIC_DISTANCE;
 
-    if (distance > MAX_DIST) {
+    if (distance >= MAX_DIST) {
       nextPulseDelay.current = 9999;
       return;
     }
@@ -578,7 +621,16 @@ export default function Index() {
     }
   };
 
-  const triggerVertexHapticOnEntry = (x: number, y: number) => {
+  const triggerVertexHapticOnEntry = (
+    x: number,
+    y: number,
+    distance: number
+  ) => {
+    if (modeRef.current !== "shape" || distance >= MAX_HAPTIC_DISTANCE) {
+      activeVertexHitsRef.current = [];
+      return;
+    }
+
     const HITBOX_RADIUS = 24;
     const previousHits = activeVertexHitsRef.current;
     const currentHits = shapeRef.current.map(
@@ -654,13 +706,17 @@ export default function Index() {
       onMoveShouldSetPanResponder: () => true,
 
       onPanResponderGrant: (evt) => {
-            const { locationX, locationY } = evt.nativeEvent;
+        const { locationX, locationY } = evt.nativeEvent;
         activeVertexHitsRef.current = [];
-        triggerVertexHapticOnEntry(locationX, locationY);
         currentDistanceRef.current =
           modeRef.current === "shape"
-                ? distanceToShape(locationX, locationY, shapeRef.current)
+            ? distanceToShape(locationX, locationY, shapeRef.current)
             : distanceToStrokes(locationX, locationY, strokesRef.current);
+        triggerVertexHapticOnEntry(
+          locationX,
+          locationY,
+          currentDistanceRef.current
+        );
         startHapticPolling();
       },
 
@@ -708,7 +764,7 @@ export default function Index() {
             : distanceToStrokes(locationX, locationY, strokesRef.current);
 
         currentDistanceRef.current = distance;
-        triggerVertexHapticOnEntry(locationX, locationY);
+        triggerVertexHapticOnEntry(locationX, locationY, distance);
         setDebugDist(Number.isFinite(distance) ? Math.round(distance) : null);
         triggerHapticIfDue(distance, currentTimeRef.current);
       },
