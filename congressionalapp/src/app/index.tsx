@@ -7,9 +7,11 @@ import {
   Text,
   TextInput,
   Pressable,
+  Platform,
 } from "react-native";
 import Svg, { Path, Line, Text as SvgText } from "react-native-svg";
 import * as Haptics from "expo-haptics";
+import { createAudioPlayer } from "expo-audio";
 import { parse } from "mathjs";
 
 // ------------------------------------------------------------------
@@ -40,7 +42,17 @@ function distToSegment(
 
 type Point = { x: number; y: number };
 
-const MAX_HAPTIC_DISTANCE = 35;
+const MAX_HAPTIC_DISTANCE = 40;
+const LINE_CHORD_DISTANCE = 10;
+const VERTEX_HITBOX_RADIUS = 24;
+const BASE_TONE_FREQUENCY = 261.63; // C4
+const LINE_TONE_FREQUENCY = 329.63; // E4
+const VERTEX_TONE_FREQUENCY = 392.0; // G4
+const TONE_SOURCES = [
+  require("../../assets/audio/base-c4.wav"),
+  require("../../assets/audio/line-e4.wav"),
+  require("../../assets/audio/vertex-g4.wav"),
+];
 
 function crossProduct(a: Point, b: Point, c: Point) {
   return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
@@ -591,9 +603,124 @@ export default function Index() {
   const currentTimeRef = useRef(0);
   const shapeRef = useRef(shape);
   const activeVertexHitsRef = useRef<boolean[]>([]);
+  const audioRef = useRef<{
+    context: any;
+    master: any;
+    tones: { oscillator: any; gain: any }[];
+  } | null>(null);
+  const nativeAudioRef = useRef<ReturnType<typeof createAudioPlayer>[] | null>(
+    null
+  );
+
   useEffect(() => {
     shapeRef.current = displayedShape;
   }, [displayedShape]);
+
+  const setGain = (gainNode: any, value: number) => {
+    const context = audioRef.current?.context;
+    if (!gainNode || !context) return;
+
+    const safeValue = Math.max(0, Math.min(1, value));
+    gainNode.gain.cancelScheduledValues(context.currentTime);
+    gainNode.gain.setTargetAtTime(safeValue, context.currentTime, 0.025);
+  };
+
+  const startAudio = () => {
+    if (Platform.OS !== "web") {
+      if (nativeAudioRef.current) return;
+
+      nativeAudioRef.current = TONE_SOURCES.map((source) => {
+        const player = createAudioPlayer(source);
+        player.loop = true;
+        player.volume = 0;
+        player.play();
+        return player;
+      });
+      return;
+    }
+
+    if (audioRef.current) return;
+
+    const AudioContextClass =
+      (globalThis as any).AudioContext || (globalThis as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+
+    const context = new AudioContextClass();
+    const master = context.createGain();
+    master.gain.value = 0.22;
+    master.connect(context.destination);
+
+    const tones = [
+      BASE_TONE_FREQUENCY,
+      LINE_TONE_FREQUENCY,
+      VERTEX_TONE_FREQUENCY,
+    ].map((frequency) => {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.value = frequency;
+      gain.gain.value = 0;
+      oscillator.connect(gain);
+      gain.connect(master);
+      oscillator.start();
+      return { oscillator, gain };
+    });
+
+    audioRef.current = { context, master, tones };
+    context.resume?.();
+  };
+
+  const updateAudio = (distance: number, isOnVertex: boolean) => {
+    startAudio();
+
+    const finiteDistance = Number.isFinite(distance) ? distance : MAX_HAPTIC_DISTANCE;
+    const closeness = 1 - Math.min(finiteDistance, MAX_HAPTIC_DISTANCE) / MAX_HAPTIC_DISTANCE;
+    const baseGain = 0.04 + closeness * 0.18;
+    const lineGain = finiteDistance <= LINE_CHORD_DISTANCE ? 0.13 + closeness * 0.12 : 0;
+    const vertexGain = isOnVertex ? 0.12 + closeness * 0.1 : 0;
+
+    if (Platform.OS !== "web") {
+      const players = nativeAudioRef.current;
+      if (!players) return;
+
+      players[0].volume = baseGain;
+      players[1].volume = lineGain;
+      players[2].volume = vertexGain;
+      return;
+    }
+
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    setGain(audio.tones[0].gain, baseGain);
+    setGain(audio.tones[1].gain, lineGain);
+    setGain(audio.tones[2].gain, vertexGain);
+  };
+
+  const stopAudio = () => {
+    const nativePlayers = nativeAudioRef.current;
+    if (nativePlayers) {
+      nativePlayers.forEach((player) => {
+        player.volume = 0;
+        player.pause();
+        player.remove();
+      });
+      nativeAudioRef.current = null;
+    }
+
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    audio.tones.forEach(({ oscillator, gain }) => {
+      setGain(gain, 0);
+      try {
+        oscillator.stop(audio.context.currentTime + 0.08);
+      } catch {
+        // Oscillators can only be stopped once.
+      }
+    });
+    audioRef.current = null;
+  };
 
   const triggerHapticIfDue = (distance: number, now: number) => {
     const MAX_DIST = MAX_HAPTIC_DISTANCE;
@@ -611,10 +738,12 @@ export default function Index() {
     if (now - lastPulseTime.current >= delay) {
       lastPulseTime.current = now;
 
-      if (distance < 8) {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      if (distance < 12) {
+        // Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       } else if (distance < 25) {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        // Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } else {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
@@ -628,21 +757,22 @@ export default function Index() {
   ) => {
     if (modeRef.current !== "shape" || distance >= MAX_HAPTIC_DISTANCE) {
       activeVertexHitsRef.current = [];
-      return;
+      return false;
     }
 
-    const HITBOX_RADIUS = 24;
     const previousHits = activeVertexHitsRef.current;
     const currentHits = shapeRef.current.map(
-      (point) => Math.hypot(point.x - x, point.y - y) <= HITBOX_RADIUS
+      (point) => Math.hypot(point.x - x, point.y - y) <= VERTEX_HITBOX_RADIUS
     );
 
     currentHits.forEach((inside, index) => {
       if (inside && !previousHits[index]) {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
+        // Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       }
     });
     activeVertexHitsRef.current = currentHits;
+    return currentHits.some(Boolean);
   };
 
   const stopHapticPolling = () => {
@@ -661,7 +791,14 @@ export default function Index() {
     }, 40);
   };
 
-  useEffect(() => stopHapticPolling, []);
+  useEffect(
+    () => () => {
+      stopHapticPolling();
+      stopAudio();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
 
   // PanResponder is created exactly once (see below), so its handler
   // closures would otherwise freeze on the "mode" and "strokes" values
@@ -712,11 +849,12 @@ export default function Index() {
           modeRef.current === "shape"
             ? distanceToShape(locationX, locationY, shapeRef.current)
             : distanceToStrokes(locationX, locationY, strokesRef.current);
-        triggerVertexHapticOnEntry(
+        const isOnVertex = triggerVertexHapticOnEntry(
           locationX,
           locationY,
           currentDistanceRef.current
         );
+        updateAudio(currentDistanceRef.current, isOnVertex);
         startHapticPolling();
       },
 
@@ -754,6 +892,7 @@ export default function Index() {
           }
 
           setDebugDist(null);
+          updateAudio(Infinity, false);
           return;
         }
 
@@ -764,13 +903,15 @@ export default function Index() {
             : distanceToStrokes(locationX, locationY, strokesRef.current);
 
         currentDistanceRef.current = distance;
-        triggerVertexHapticOnEntry(locationX, locationY, distance);
+        const isOnVertex = triggerVertexHapticOnEntry(locationX, locationY, distance);
+        updateAudio(distance, isOnVertex);
         setDebugDist(Number.isFinite(distance) ? Math.round(distance) : null);
         triggerHapticIfDue(distance, currentTimeRef.current);
       },
 
       onPanResponderRelease: () => {
         stopHapticPolling();
+        stopAudio();
         activeVertexHitsRef.current = [];
         pinchStartDistanceRef.current = null;
         pinchStartXRangeRef.current = null;
@@ -780,6 +921,7 @@ export default function Index() {
 
       onPanResponderTerminate: () => {
         stopHapticPolling();
+        stopAudio();
         activeVertexHitsRef.current = [];
         pinchStartDistanceRef.current = null;
         pinchStartXRangeRef.current = null;

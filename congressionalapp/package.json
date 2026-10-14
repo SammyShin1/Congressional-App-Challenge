@@ -8,6 +8,7 @@
     "again": "^0.0.1",
     "and": "^0.0.3",
     "expo": "~57.0.23",
+    "expo-audio": "~57.0.5",
     "expo-constants": "~57.0.18",
     "expo-device": "~57.0.2",
     "expo-font": "~57.0.4",
